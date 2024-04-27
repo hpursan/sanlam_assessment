@@ -1,11 +1,15 @@
 package com.hpursan.sanlam_assessment.service;
 
 import com.hpursan.sanlam_assessment.exception.InsufficientFundsException;
+import com.hpursan.sanlam_assessment.exception.PublishingFailedException;
 import com.hpursan.sanlam_assessment.exception.WithdrawalFailedException;
 import com.hpursan.sanlam_assessment.model.WithdrawalEvent;
 import com.hpursan.sanlam_assessment.repository.AccountRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
+import org.springframework.retry.support.RetryTemplate;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.core.async.BlockingOutputStreamAsyncRequestBody;
 import software.amazon.awssdk.services.sns.SnsAsyncClient;
@@ -38,6 +42,7 @@ public class BankAccountService {
     // these are intentionally private and final to enforce immutability
     private final SnsClient snsClient;
     private final AccountRepository accountRepository;
+    private final RetryTemplate retryTemplate;
 
     public CompletableFuture<String> withdraw(Long accountId, BigDecimal withdrawalAmt) {
         return CompletableFuture.supplyAsync(() -> {
@@ -48,7 +53,11 @@ public class BankAccountService {
                 validateSufficientFunds(currentBalance, withdrawalAmt);
 
                 updateAccountBalance(accountId, withdrawalAmt);
-                publishWithdrawalEvent(withdrawalAmt, accountId, withdrawalSuccessfulEventStatus);
+
+                retryTemplate.execute(context -> {
+                    publishWithdrawalEvent(withdrawalAmt, accountId, withdrawalSuccessfulEventStatus);
+                    return null; // to satisfy the lamba expression
+                });
 
                 return withdrawalSuccessful;
             } catch (InsufficientFundsException | WithdrawalFailedException e) {
@@ -95,7 +104,7 @@ public class BankAccountService {
             WithdrawalEvent event = new WithdrawalEvent(amount, accountId, status);
             String eventJson = event.toJson();
             PublishRequest publishRequest = PublishRequest.builder()
-                    .message(eventJson) // how should we handle json processing exception ?
+                    .message(eventJson)
                     .topicArn(snsTopicArn)
                     .build();
 
@@ -104,6 +113,7 @@ public class BankAccountService {
         } catch (Exception e) {
             // not sure what else to do if we cannot publish the event. so for now, will log it.
             log.error("An error occurred when publishing withdrawal event for account {} and an amount of {}({}): {}", accountId, amount, status, e.getMessage());
+            throw new PublishingFailedException("Failed to publish withdrawal event", e);
         }
     }
 }
