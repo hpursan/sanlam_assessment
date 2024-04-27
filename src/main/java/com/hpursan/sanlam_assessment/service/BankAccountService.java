@@ -39,36 +39,51 @@ public class BankAccountService {
     private final SnsClient snsClient;
     private final AccountRepository accountRepository;
 
-    public CompletableFuture<String> withdraw(Long accountId, BigDecimal withdrawalAmt){
+    public CompletableFuture<String> withdraw(Long accountId, BigDecimal withdrawalAmt) {
         return CompletableFuture.supplyAsync(() -> {
-
             try {
-                log.info("Get the account balance for account id {}", accountId);
+                validateWithdrawalAmount(withdrawalAmt);
+
                 BigDecimal currentBalance = accountRepository.getCurrentBalance(accountId);
+                validateSufficientFunds(currentBalance, withdrawalAmt);
 
-                // attempt to update the balance if there's sufficient funds and if successful, publish the event
-                if (currentBalance != null && currentBalance.compareTo(withdrawalAmt) >= 0) {
-                    log.info("There is sufficient balance in account {} to withdraw an amount of {}", accountId, withdrawalAmt);
-                    accountRepository.updateBalance(accountId, withdrawalAmt);
-                    publishWithdrawalEvent(withdrawalAmt, accountId, withdrawalSuccessfulEventStatus);
-                    return withdrawalSuccessful;
-                } else {
-                    String err_msg = String.format("Insufficient funds in account %s to withdraw %b", accountId, withdrawalAmt);
-                    log.error(err_msg);
-                    throw new InsufficientFundsException(err_msg);
-                }
+                updateAccountBalance(accountId, withdrawalAmt);
+                publishWithdrawalEvent(withdrawalAmt, accountId, withdrawalSuccessfulEventStatus);
 
-            } catch (InsufficientFundsException ife) {
-                // nothing much to do here as we have already logged the error. so for now, let's rethrow
-                throw ife;
-            }
-            catch (Exception e) {
+                return withdrawalSuccessful;
+            } catch (InsufficientFundsException | WithdrawalFailedException e) {
+                throw e; // Rethrow known exceptions
+            } catch (Exception e) {
                 String errorMessage = String.format("Failed to withdraw amount %s from account %d", withdrawalAmt, accountId);
                 log.error(errorMessage, e);
                 throw new WithdrawalFailedException(errorMessage, e);
             }
-
         });
+    }
+
+    private void validateWithdrawalAmount(BigDecimal withdrawalAmt) {
+        if (withdrawalAmt == null || withdrawalAmt.compareTo(BigDecimal.ZERO) < 0) {
+            log.error("Invalid withdrawal amount: {}", withdrawalAmt);
+            throw new IllegalArgumentException("Withdrawal amount must be non-null and positive");
+        }
+    }
+
+    private void validateSufficientFunds(BigDecimal currentBalance, BigDecimal withdrawalAmt) {
+        if (currentBalance == null || currentBalance.compareTo(withdrawalAmt) < 0) {
+            String errMsg = String.format("Insufficient funds in account to withdraw amount %s", withdrawalAmt);
+            log.error(errMsg);
+            throw new InsufficientFundsException(errMsg);
+        }
+    }
+
+    private void updateAccountBalance(Long accountId, BigDecimal withdrawalAmt) {
+        try {
+            accountRepository.updateBalance(accountId, withdrawalAmt);
+        } catch (Exception e) {
+            String errMsg = String.format("Failed to update balance for account %d", accountId);
+            log.error(errMsg, e);
+            throw new WithdrawalFailedException(errMsg, e);
+        }
     }
 
     private void publishWithdrawalEvent(BigDecimal amount, Long accountId, String status) {
