@@ -1,0 +1,53 @@
+spring:
+  application:
+    name: Bank Account Application
+
+aws:
+  region: ap-south-2
+
+# application statuses
+status:
+  withdrawal:
+    successful: "Withdrawal successful"
+    insufficient_funds: "Insufficient funds"
+
+# event statuses used when publishing events
+event:
+  status:
+    withdrawal:
+      successful: SUCCESSFUL
+  topic:
+    withdrawal:
+      successful: "arn:aws:sns:YOUR_REGION:YOUR_ACCOUNT_ID:YOUR_TOPIC_NAME"
+
+# version
+# server:
+#   servlet:
+#     context-path: /api/v1
+
+# retry policy
+retry:
+  maxAttempts: 3
+  backOffPeriod: 1000
+
+# actuator config
+# the management.info.env.enabled needed to be set to true to show info
+# see: https://github.com/spring-projects/spring-boot/wiki/Spring-Boot-2.6-Release-Notes#actuator-env-infocontributor-disabled-by-default
+management:
+  info:
+    env:
+      enabled: true
+  endpoints:
+    web:
+      base-path: /actuator
+      path-mapping:
+        health: healthcheck
+      exposure:
+        include: "*"
+
+# info. will be presented when hitting the actuator/info endpoint
+info:
+  app:
+    name: Bank Account Application
+    version: 1.0.0
+    description: A simple bank account application with minimal services
